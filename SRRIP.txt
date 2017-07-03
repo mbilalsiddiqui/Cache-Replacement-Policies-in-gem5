@@ -1,0 +1,925 @@
+diff -r 5ce0c4e42f93 configs/common/Caches.py
+--- a/configs/common/Caches.py	Fri Oct 19 10:16:18 2012 -0400
++++ b/configs/common/Caches.py	Fri Dec 09 01:43:51 2016 -0500
+@@ -31,16 +31,16 @@
+ class L1Cache(BaseCache):
+     assoc = 2
+     block_size = 64
+-    hit_latency = '1ns'
++    hit_latency = '2ns'
+     response_latency = '1ns'
+     mshrs = 10
+     tgts_per_mshr = 20
+     is_top_level = True
+ 
+ class L2Cache(BaseCache):
+-    assoc = 8
++    assoc = 16
+     block_size = 64
+-    hit_latency = '10ns'
++    hit_latency = '6ns'
+     response_latency = '10ns'
+     mshrs = 20
+     tgts_per_mshr = 12
+diff -r 5ce0c4e42f93 configs/common/Options.py
+--- a/configs/common/Options.py	Fri Oct 19 10:16:18 2012 -0400
++++ b/configs/common/Options.py	Fri Dec 09 01:43:51 2016 -0500
+@@ -42,7 +42,7 @@
+     parser.add_option("--caches", action="store_true")
+     parser.add_option("--l2cache", action="store_true")
+     parser.add_option("--fastmem", action="store_true")
+-    parser.add_option("--clock", action="store", type="string", default='2GHz')
++    parser.add_option("--clock", action="store", type="string", default='1GHz')
+     parser.add_option("--num-dirs", type="int", default=1)
+     parser.add_option("--num-l2caches", type="int", default=1)
+     parser.add_option("--num-l3caches", type="int", default=1)
+diff -r 5ce0c4e42f93 configs/spec2k6/run.py
+--- a/configs/spec2k6/run.py	Fri Oct 19 10:16:18 2012 -0400
++++ b/configs/spec2k6/run.py	Fri Dec 09 01:43:51 2016 -0500
+@@ -153,7 +153,7 @@
+ 
+ np = options.num_cpus
+ system = System(cpu = [CPUClass(cpu_id=i) for i in xrange(np)],
+-                physmem = SimpleMemory(range=AddrRange("512MB")),
++                physmem = SimpleMemory(range=AddrRange("2048MB")),
+                 membus = CoherentBus(), mem_mode = test_mem_mode)
+ 
+ for i in xrange(np):
+@@ -164,26 +164,37 @@
+     else:
+         system.cpu[i].workload = multiprocesses[i]
+ 
+-options.use_map = True
+-Ruby.create_system(options, system)
+-assert(options.num_cpus == len(system.ruby._cpu_ruby_ports))
+ 
+-for i in xrange(np):
+-    ruby_port = system.ruby._cpu_ruby_ports[i]
++if options.ruby:
++    if not (options.cpu_type == "detailed" or options.cpu_type == "timing"):
++        print >> sys.stderr, "Ruby requires TimingSimpleCPU or O3CPU!!"
++        sys.exit(1)
++
++
++    options.use_map = True
++    Ruby.create_system(options, system)
++    assert(options.num_cpus == len(system.ruby._cpu_ruby_ports))
++
++    for i in xrange(np):
++        ruby_port = system.ruby._cpu_ruby_ports[i]
+ 
+     # Create the interrupt controller and connect its ports to Ruby
+-    system.cpu[i].createInterruptController()
++        system.cpu[i].createInterruptController()
+     # Connect the cpu's cache ports to Ruby
+-    system.cpu[i].icache_port = ruby_port.slave
+-    system.cpu[i].dcache_port = ruby_port.slave
+-    if buildEnv['TARGET_ISA'] == 'x86':
+-        system.cpu[i].interrupts.pio = ruby_port.master
+-        system.cpu[i].interrupts.int_master = ruby_port.slave
+-        system.cpu[i].interrupts.int_slave = ruby_port.master
++        system.cpu[i].icache_port = ruby_port.slave
++        system.cpu[i].dcache_port = ruby_port.slave
++        if buildEnv['TARGET_ISA'] == 'x86':
++            system.cpu[i].interrupts.pio = ruby_port.master
++            system.cpu[i].interrupts.int_master = ruby_port.slave
++            system.cpu[i].interrupts.int_slave = ruby_port.master
+ 
+-        system.cpu[i].itb.walker.port = ruby_port.slave
+-        system.cpu[i].dtb.walker.port = ruby_port.slave
++            system.cpu[i].itb.walker.port = ruby_port.slave
++            system.cpu[i].dtb.walker.port = ruby_port.slave
+ 
++else:
++    system.system_port = system.membus.slave
++    system.physmem.port = system.membus.master
++    CacheConfig.config_cache(options, system)
+ 
+ root = Root(full_system = False, system = system)
+ Simulation.run(options, root, system, FutureClass)
+diff -r 5ce0c4e42f93 configs/spec2k6/spec2k6.py
+--- a/configs/spec2k6/spec2k6.py	Fri Oct 19 10:16:18 2012 -0400
++++ b/configs/spec2k6/spec2k6.py	Fri Dec 09 01:43:51 2016 -0500
+@@ -98,7 +98,7 @@
+ #433.milc
+ milc=LiveProcess()
+ milc_dir='433.milc/'
+-milc.executable = bench_dir+milc_dir+'/exe/milc'
++milc.executable = bench_dir+milc_dir+'/build/build_base_amd64-m64-gcc43-nn.0000/milc'
+ stdin=bench_dir+milc_dir+'/data/ref/input/su3imp.in'
+ milc.cmd = [milc.executable]
+ milc.input=stdin
+@@ -185,7 +185,7 @@
+ 
+ #456.hmmer
+ hmmer=LiveProcess()
+-hmmr_dir = '456.hmmr/'
++hmmr_dir = '456.hmmer/'
+ hmmer.executable = bench_dir+hmmr_dir+'/exe/hmmer'
+ data=bench_dir+hmmr_dir+'/data/ref/input/nph3.hmm'
+ hmmer.cmd = [hmmer.executable]+['--fixed', '0', '--mean', '325', '--num', '5000', '--sd', '200', '--seed', '0', data]
+@@ -255,9 +255,9 @@
+ 
+ #482.sphinx
+ sphinx3=LiveProcess()
+-sphinx3_dir = '482.sphinx/'
++sphinx3_dir = '482.sphinx3/'
+ sphinx3.executable =  bench_dir+sphinx3_dir+'/exe/sphinx'
+-sphinx3.cmd = [sphinx3.executable]+['ctlfile', '.', 'args.an4']
++sphinx3.cmd = [sphinx3.executable]+['beams.dat', '.', 'args.an4']
+ sphinx3.output = 'an4.out'
+ 
+ #483.xalancbmk
+diff -r 5ce0c4e42f93 src/arch/alpha/AlphaTLB.py
+--- a/src/arch/alpha/AlphaTLB.py	Fri Oct 19 10:16:18 2012 -0400
++++ b/src/arch/alpha/AlphaTLB.py	Fri Dec 09 01:43:51 2016 -0500
+@@ -37,7 +37,7 @@
+     size = Param.Int("TLB size")
+ 
+ class AlphaDTB(AlphaTLB):
+-    size = 64
++    size = 256
+ 
+ class AlphaITB(AlphaTLB):
+-    size = 48
++    size = 256
+diff -r 5ce0c4e42f93 src/cpu/inorder/InOrderCPU.py
+--- a/src/cpu/inorder/InOrderCPU.py	Fri Oct 19 10:16:18 2012 -0400
++++ b/src/cpu/inorder/InOrderCPU.py	Fri Dec 09 01:43:51 2016 -0500
+@@ -40,7 +40,7 @@
+     threadModel = Param.ThreadModel('SMT', "Multithreading model (SE-MODE only)")
+     
+     cachePorts = Param.Unsigned(2, "Cache Ports")
+-    stageWidth = Param.Unsigned(4, "Stage width")
++    stageWidth = Param.Unsigned(1, "Stage width")
+ 
+     fetchBuffSize = Param.Unsigned(4, "Fetch Buffer Size (Number of Cache Blocks Stored)")
+     memBlockSize = Param.Unsigned(64, "Memory Block Size")
+diff -r 5ce0c4e42f93 src/cpu/inorder/resources/branch_predictor.cc
+--- a/src/cpu/inorder/resources/branch_predictor.cc	Fri Oct 19 10:16:18 2012 -0400
++++ b/src/cpu/inorder/resources/branch_predictor.cc	Fri Dec 09 01:43:51 2016 -0500
+@@ -117,10 +117,13 @@
+                     }
+ 
+                     inst->setBranchPred(predict_taken);
+-                }
+-
++                
++               
++                 }
+                 //@todo: Check to see how hw_rei is handled here...how does PC,NPC get
+                 //       updated to compare mispredict against???
++               
++                 
+                 inst->setPredTarg(pred_PC);
+                 DPRINTF(InOrderBPred, "[tid:%i]: [sn:%i]: %s Predicted PC is "
+                         "%s.\n", tid, seq_num, inst->instName(), pred_PC);
+diff -r 5ce0c4e42f93 src/cpu/inorder/resources/execution_unit.cc
+--- a/src/cpu/inorder/resources/execution_unit.cc	Fri Oct 19 10:16:18 2012 -0400
++++ b/src/cpu/inorder/resources/execution_unit.cc	Fri Dec 09 01:43:51 2016 -0500
+@@ -146,8 +146,10 @@
+                 executions++;
+ 
+                 if (fault == NoFault) {
++                   
+                     inst->setExecuted();
+ 
++
+                     if (inst->mispredicted()) {
+                         assert(inst->isControl());
+ 
+diff -r 5ce0c4e42f93 src/cpu/inorder/resources/fetch_seq_unit.cc
+--- a/src/cpu/inorder/resources/fetch_seq_unit.cc	Fri Oct 19 10:16:18 2012 -0400
++++ b/src/cpu/inorder/resources/fetch_seq_unit.cc	Fri Dec 09 01:43:51 2016 -0500
+@@ -194,7 +194,7 @@
+                     // This should handle ISAs w/delay slots and annulled delay
+                     // slots to figure out which is the next PC to fetch after
+                     // a mispredict
+-                    DynInstPtr bdelay_inst = NULL;
++                   DynInstPtr bdelay_inst = NULL;
+                     ListIt bdelay_it;
+                     if (inst->onInstList) {
+                         bdelay_it = inst->getInstListIt();
+@@ -214,7 +214,7 @@
+                             advancePC(nextPC, inst->staticInst);
+                             DPRINTF(InOrderFetchSeq, "Advanced PC to %s\n", nextPC);
+                         }
+-                    }
++                    } 
+                 } else {
+                     nextPC = inst->pcState();
+                     advancePC(nextPC, inst->staticInst);
+diff -r 5ce0c4e42f93 src/cpu/inorder/resources/use_def.cc
+--- a/src/cpu/inorder/resources/use_def.cc	Fri Oct 19 10:16:18 2012 -0400
++++ b/src/cpu/inorder/resources/use_def.cc	Fri Dec 09 01:43:51 2016 -0500
+@@ -287,6 +287,7 @@
+                 DynInstPtr forward_inst = regDepMap[tid]->canForward(reg_type,
+                                                                      flat_idx,
+                                                                      inst);
++                
+ 
+                 if (forward_inst) {
+                     int dest_reg_idx =
+diff -r 5ce0c4e42f93 src/cpu/o3/O3CPU.py
+--- a/src/cpu/o3/O3CPU.py	Fri Oct 19 10:16:18 2012 -0400
++++ b/src/cpu/o3/O3CPU.py	Fri Dec 09 01:43:51 2016 -0500
+@@ -37,7 +37,7 @@
+     type = 'DerivO3CPU'
+     activity = Param.Unsigned(0, "Initial count")
+ 
+-    cachePorts = Param.Unsigned(200, "Cache Ports")
++    cachePorts = Param.Unsigned(2, "Cache Ports")
+ 
+     decodeToFetchDelay = Param.Cycles(1, "Decode to fetch delay")
+     renameToFetchDelay = Param.Cycles(1 ,"Rename to fetch delay")
+@@ -66,7 +66,7 @@
+     issueToExecuteDelay = Param.Cycles(1, "Issue to execute delay (internal "
+               "to the IEW stage)")
+     dispatchWidth = Param.Unsigned(8, "Dispatch width")
+-    issueWidth = Param.Unsigned(8, "Issue width")
++    issueWidth = Param.Unsigned(4, "Issue width")
+     wbWidth = Param.Unsigned(8, "Writeback width")
+     wbDepth = Param.Unsigned(1, "Writeback depth")
+     fuPool = Param.FUPool(DefaultFUPool(), "Functional Unit pool")
+@@ -85,21 +85,21 @@
+     predType = Param.String("tournament", "Branch predictor type ('local', 'tournament')")
+     localPredictorSize = Param.Unsigned(2048, "Size of local predictor")
+     localCtrBits = Param.Unsigned(2, "Bits per counter")
+-    localHistoryTableSize = Param.Unsigned(2048, "Size of local history table")
+-    localHistoryBits = Param.Unsigned(11, "Bits for the local history")
+-    globalPredictorSize = Param.Unsigned(8192, "Size of global predictor")
++    localHistoryTableSize = Param.Unsigned(65536, "Size of local history table")
++    localHistoryBits = Param.Unsigned(16, "Bits for the local history")
++    globalPredictorSize = Param.Unsigned(65536, "Size of global predictor")
+     globalCtrBits = Param.Unsigned(2, "Bits per counter")
+-    globalHistoryBits = Param.Unsigned(13, "Bits of history")
+-    choicePredictorSize = Param.Unsigned(8192, "Size of choice predictor")
++    globalHistoryBits = Param.Unsigned(16, "Bits of history")
++    choicePredictorSize = Param.Unsigned(65536, "Size of choice predictor")
+     choiceCtrBits = Param.Unsigned(2, "Bits of choice counters")
+ 
+     BTBEntries = Param.Unsigned(4096, "Number of BTB entries")
+     BTBTagSize = Param.Unsigned(16, "Size of the BTB tags, in bits")
+ 
+-    RASSize = Param.Unsigned(16, "RAS size")
++    RASSize = Param.Unsigned(32, "RAS size")
+ 
+     LQEntries = Param.Unsigned(32, "Number of load queue entries")
+-    SQEntries = Param.Unsigned(32, "Number of store queue entries")
++    SQEntries = Param.Unsigned(128, "Number of store queue entries")
+     LSQDepCheckShift = Param.Unsigned(4, "Number of places to shift addr before check")
+     LSQCheckLoads = Param.Bool(True,
+         "Should dependency violations be checked for loads & stores or just stores")
+@@ -113,7 +113,7 @@
+     numPhysIntRegs = Param.Unsigned(256, "Number of physical integer registers")
+     numPhysFloatRegs = Param.Unsigned(256, "Number of physical floating point "
+                                       "registers")
+-    numIQEntries = Param.Unsigned(64, "Number of instruction queue entries")
++    numIQEntries = Param.Unsigned(32, "Number of instruction queue entries")
+     numROBEntries = Param.Unsigned(192, "Number of reorder buffer entries")
+ 
+     instShiftAmt = Param.Unsigned(2, "Number of bits to shift instructions by")
+diff -r 5ce0c4e42f93 src/mem/Bus.py
+--- a/src/mem/Bus.py	Fri Oct 19 10:16:18 2012 -0400
++++ b/src/mem/Bus.py	Fri Dec 09 01:43:51 2016 -0500
+@@ -50,7 +50,7 @@
+     # Override the default clock
+     clock = '1GHz'
+     header_cycles = Param.Cycles(1, "cycles of overhead per transaction")
+-    width = Param.Unsigned(8, "bus width (bytes)")
++    width = Param.Unsigned(32, "bus width (bytes)")
+     block_size = Param.Unsigned(64, "The default block size if not set by " \
+                                     "any connected module")
+ 
+diff -r 5ce0c4e42f93 src/mem/SimpleDRAM.py
+--- a/src/mem/SimpleDRAM.py	Fri Oct 19 10:16:18 2012 -0400
++++ b/src/mem/SimpleDRAM.py	Fri Dec 09 01:43:51 2016 -0500
+@@ -65,7 +65,7 @@
+     # the physical organisation of the DRAM
+     lines_per_rowbuffer = Param.Unsigned(64, "Row buffer size in cache lines")
+     ranks_per_channel = Param.Unsigned(2, "Number of ranks per channel")
+-    banks_per_rank = Param.Unsigned(8, "Number of banks per rank")
++    banks_per_rank = Param.Unsigned(16, "Number of banks per rank")
+ 
+     # the basic configuration of the controller architecture
+     write_buffer_size = Param.Unsigned(32, "Number of read queue entries")
+@@ -84,10 +84,10 @@
+ 
+     # the amount of time in nanoseconds from issuing an activate command
+     # to the data being available in the row buffer for a read/write
+-    tRCD = Param.Latency("14ns", "RAS to CAS delay")
++    tRCD = Param.Latency("30ns", "RAS to CAS delay")
+ 
+     # the time from issuing a read/write command to seeing the actual data
+-    tCL = Param.Latency("14ns", "CAS latency")
++    tCL = Param.Latency("270ns", "CAS latency")
+ 
+     # minimum time between a precharge and subsequent activate
+     tRP = Param.Latency("14ns", "Row precharge time")
+diff -r 5ce0c4e42f93 src/mem/cache/cache_impl.hh
+--- a/src/mem/cache/cache_impl.hh	Fri Oct 19 10:16:18 2012 -0400
++++ b/src/mem/cache/cache_impl.hh	Fri Dec 09 01:43:51 2016 -0500
+@@ -328,6 +328,8 @@
+                 return false;
+             }
+             int id = pkt->req->masterId();
++            DPRINTF(Cache, " The id is %x \n",id);
++
+             tags->insertBlock(pkt->getAddr(), blk, id);
+             blk->status = BlkValid | BlkReadable;
+         }
+@@ -1099,6 +1101,9 @@
+             DPRINTF(Cache, "using temp block for %x\n", addr);
+         } else {
+             int id = pkt->req->masterId();
++            DPRINTF(Cache, " The id2 is %x \n",id);
++      
++
+             tags->insertBlock(pkt->getAddr(), blk, id);
+         }
+ 
+@@ -1476,6 +1481,8 @@
+         return NULL;
+     }
+ 
++    DPRINTF(Cache, "Hum getTiming m hain for addr hit\n");
++
+     // use request from 1st target
+     PacketPtr tgt_pkt = mshr->getTarget()->pkt;
+     PacketPtr pkt = NULL;
+@@ -1654,6 +1661,8 @@
+ Cache<TagStore>::MemSidePort::recvTimingResp(PacketPtr pkt)
+ {
+     cache->handleResponse(pkt);
++    DPRINTF(Cache, "memside for addr hit\n");
++
+     return true;
+ }
+ 
+diff -r 5ce0c4e42f93 src/mem/cache/tags/base.hh
+--- a/src/mem/cache/tags/base.hh	Fri Oct 19 10:16:18 2012 -0400
++++ b/src/mem/cache/tags/base.hh	Fri Dec 09 01:43:51 2016 -0500
+@@ -87,7 +87,12 @@
+      * exits.
+      */
+     Stats::Scalar sampledRefs;
++    
++    /**
++     * 
++     */
+ 
++    
+     /**
+      * Average number of references to a block before is was replaced.
+      * @todo This should change to an average stat once we have them.
+diff -r 5ce0c4e42f93 src/mem/cache/tags/cacheset.cc
+--- a/src/mem/cache/tags/cacheset.cc	Fri Oct 19 10:16:18 2012 -0400
++++ b/src/mem/cache/tags/cacheset.cc	Fri Dec 09 01:43:51 2016 -0500
+@@ -46,7 +46,7 @@
+ CacheSet::moveToHead(CacheBlk *blk)
+ {
+     // nothing to do if blk is already head
+-    if (blks[0] == blk)
++   if (blks[0] == blk)
+         return;
+ 
+     // write 'next' block into blks[i], moving up from MRU toward LRU
+@@ -66,6 +66,7 @@
+     } while (next != blk);
+ }
+ 
++
+ void
+ CacheSet::moveToTail(CacheBlk *blk)
+ {
+@@ -90,3 +91,299 @@
+     } while (next != blk);
+ }
+ 
++int
++CacheSet::findPosition(CacheBlk *blk)
++{
++int j; 
++   for(j=0; j< assoc-1;++j)
++	{
++          if(blks[j]==blk)
++              break;
++         
++
++	}
++
++ return j;
++
++}
++/*
++void 
++CacheSet::moveRRIP(CacheBlk *blk,int index)
++{
++
++
++
++     blks[index]=blk;
++
++
++}
++*/
++void
++CacheSet::checkHead(CacheBlk *blk)
++{
++if(blks[assoc-1]==blk)
++{
++  int i = 0;
++    CacheBlk *next = blk;
++
++    do {
++        assert(i < assoc);
++        // swap blks[i] and next
++                 CacheBlk *tmp = blks[i];
++                         blks[i] = next;
++                                 next = tmp;
++                                         ++i;
++                                             } while (next != blk);
++                                             
++
++
++
++}
++
++
++
++}
++
++bool
++CacheSet::checkInvalid()
++{
++
++ bool check=false;
++int j;
++ for(j=0; j< assoc-1;++j)
++        {
++
++        if(!blks[j]->isValid())
++        {
++          check = true;
++        }
++        if(check) break ;
++
++     }
++if(check) return true;
++else return false;
++}
++
++
++int
++CacheSet::checkInvalidPos()
++{
++
++ bool check=false;
++int j;
++ for(j=0; j< assoc-1;++j)
++        {
++
++        if(!blks[j]->isValid())
++        {
++          check = true;
++        }
++        if(check) break;
++        
++
++}
++return j;
++}
++
++
++
++
++void
++CacheSet::moveToHeadLIP(CacheBlk *blk)
++{
++
++blks[assoc-1]=blk;
++
++/*
++//CacheBlk *next =  blk;
++
++ bool check = false;
++int j;
++ for(j=0; j< assoc-2;++j)
++	{
++
++        if(!blks[j]->isValid())
++        {
++          check = true;
++        }
++	if(check) break;
++
++	}	
++
++ if(!check) {
++
++
++  blks[assoc-1] = blk;
++
++  return;
++}
++	if(check)
++	{
++     blks[j]=blk;
++
++	}
++*/
++/*
++
++CacheBlk *next =  blk;
++
++ bool check = false;
++
++ for(int j=0; j< assoc-1;++j)
++{
++
++	if(!blks[j]->isValid())
++	{
++	  check = true;
++
++
++}	
++
++
++}
++
++ if(!check) {
++
++
++  blks[assoc-1] = blk;
++
++  return;
++}
++
++if(check)  {
++
++
++                // nothing to do if blk is already head
++                    if (blks[0] == blk)
++                            return;
++                //
++                //                // write 'next' block into blks[i], moving up from MRU toward LRU
++                //                    // until we overwrite the block we moved to head.
++                //
++                //                        // start by setting up to write 'blk' into blks[0]
++                                            int i = 0;
++                //                                CacheBlk *next = blk;
++                //
++                                                    do {
++                                                            assert(i < assoc);
++                                                                    // swap blks[i] and next
++                                                                            CacheBlk *tmp = blks[i];
++                                                                                   blks[i] = next;
++                                                                                            next = tmp;
++                                                                                                    ++i;
++                                                                                                        } while (next != blk);
++                
++
++
++}
++
++
+
++
++*/
++
++//CacheBlk *next = blk;
++
++  // nothing to do if blk is already tail
++ //      blks[assoc-1]=blk;
++
++/*
++    bool check = false;
++    int temp=0;
++   
++   for (int j=0; j< assoc;++j)
++         {
++        if(blks[j]==next)
++          {
++          check = true;
++          temp = j+1;
++          }
++        if(check) break;
++        }
++if(check) return;
++*/
++/*
++
++  
++                   // write 'next' block into blks[i], moving from LRU to MRU
++                       // until we overwrite the block we moved to tail.
++  
++                           // start by setting up to write 'blk' into tail
++                               int i = assoc - 1;
++
++  
++                                       do {
++                                               assert(i >= 0);
++                                                       // swap blks[i] and next
++                                                               CacheBlk *tmp = blks[i];
++                                                                       blks[i] = next;
++                                                                               next = tmp;
++                                                                                       --i;
++                                                                                           } while (next != blk);
++                                                                                           
++
++   CacheBlk *next = blk;
++  <F4>  bool check = false;
++    int temp=0;
++    int i=0; 
++   for (int j=0; j< assoc;++j)
++         {
++        if(blks[j]==next)
++          {
++          check = true;
++          temp = j+1;
++          }
++	if(check) break;
++        }
++
++
++
++	
++if(check && temp==1)
++{
++
++ return;
++}
++
++if (check && temp!=1){
++
++    do {
++       
++        //assert(i < assoc);
++ //     swap blks[i] and next
++        CacheBlk *tmp = blks[i];
++        blks[i]=next;
++         next = tmp;        
++        ++i;
++        } while (i != (temp+1));
++                                              
++  }  else blks[assoc-1]=blk;
++
++*/ 
++
++
++}
++
++
+diff -r 5ce0c4e42f93 src/mem/cache/tags/cacheset.hh
+--- a/src/mem/cache/tags/cacheset.hh	Fri Oct 19 10:16:18 2012 -0400
++++ b/src/mem/cache/tags/cacheset.hh	Fri Dec 09 01:43:51 2016 -0500
+@@ -71,6 +71,18 @@
+      * @param blk The block to move
+      */
+     void moveToTail(CacheBlk *blk);
++  /**
++     * Move the given block to MRU position from LRU position only when accessed.
++     * @param blk The block to move
++     */
++    void moveToHeadLIP(CacheBlk *blk);
++   
++    void moveRRIP(CacheBlk *blk,int index);
++    int findPosition(CacheBlk *blk);   
++    void checkHead(CacheBlk *blk);
++
++     bool checkInvalid();
++     int checkInvalidPos();
+ 
+ };
+ 
+diff -r 5ce0c4e42f93 src/mem/cache/tags/lru.cc
+--- a/src/mem/cache/tags/lru.cc	Fri Oct 19 10:16:18 2012 -0400
++++ b/src/mem/cache/tags/lru.cc	Fri Dec 09 01:43:51 2016 -0500
+@@ -34,6 +34,8 @@
+  */
+ 
+ #include <string>
++#include <cstdlib> 
++#include <ctime>
+ 
+ #include "base/intmath.hh"
+ #include "debug/CacheRepl.hh"
+@@ -63,6 +65,9 @@
+     if (hitLatency <= 0) {
+         fatal("access latency must be greater than zero");
+     }
++    PSEL = blkSize - 64;   // Initializing counter for DIP Set Dueling
++   
++
+ 
+     blkMask = blkSize - 1;
+     setShift = floorLog2(blkSize);
+@@ -78,6 +83,17 @@
+     numBlocks = numSets * assoc;
+     dataBlks = new uint8_t[numBlocks * blkSize];
+ 
++	for (unsigned k = 0; k < numSets; ++k) 
++	{
++          for (unsigned e = 0; e < assoc-1; ++e)
++              {
++
++    	         countsets[k][e]=3;
++
++              }
++
++	}
++
+     unsigned blkIndex = 0;       // index into blks array
+     for (unsigned i = 0; i < numSets; ++i) {
+         sets[i].assoc = assoc;
+@@ -124,8 +140,18 @@
+     lat = hitLatency;
+     if (blk != NULL) {
+         // move this block to head of the MRU list
+-        sets[set].moveToHead(blk);
+-        DPRINTF(CacheRepl, "set %x: moving blk %x to MRU\n",
++if(assoc==2)
++    sets[set].moveToHead(blk);
++
++if(assoc>=4)
++{
++  int k= sets[set].findPosition(blk);
++   countsets[set][k]=0;
++     
++          
++}
++
++ DPRINTF(CacheRepl, "set %x: moving blk %x to MRU\n",
+                 set, regenerateBlkAddr(tag, set));
+         if (blk->whenReady > curTick()
+             && blk->whenReady - curTick() > hitLatency) {
+@@ -153,12 +179,63 @@
+     unsigned set = extractSet(addr);
+     // grab a replacement candidate
+     BlkType *blk = sets[set].blks[assoc-1];
++ 
++  if(assoc==2)
++    {
+ 
+     if (blk->isValid()) {
+-        DPRINTF(CacheRepl, "set %x: selecting blk %x for replacement\n",
+-                set, regenerateBlkAddr(blk->tag, set));
++        DPRINTF(CacheRepl, "set %x: selecting blk in L1Cache %x for replacement and %x assoc\n",
++                set, regenerateBlkAddr(blk->tag, set), assoc);
+     }
+-    return blk;
++   }
++     int h= 0;
++   int u; bool yi;  
++   bool check = false;
++   if(assoc>3)
++        {
++       yi =sets[set].checkInvalid();
++      
++    for(int o=0;o<assoc-1;++o)
++
++	{	 
++	for(h=0; h<assoc-1;++h)
++        {
++         if(countsets[set][h]==3)
++                {
++                  check = true;        
++                }
++
++     //  if(check){// countsets[set][h]=2;
++//	sets[set].moveRRIP(blk,h);
++
++         
++//	}
++     if(check) break; 
++      }
++           
++
++  if(!check){
++
++            countsets[set][o]+=1;
++          }      
++    if(check) break;
++	}
++
++if(!yi)
++   	blk=sets[set].blks[h];
++else{ 
++           
++u=sets[set].checkInvalidPos();
++blk=sets[set].blks[u];   
++     }
++     
++}
++    if (blk->isValid()) {
++        DPRINTF(CacheRepl, "set %x: selecting blk in L2Cache %x for replacement and %x assoc\n",
++                set, regenerateBlkAddr(blk->tag, set),assoc);
++    }
++    
++   return blk;
+ }
+ 
+ void
+@@ -186,8 +263,7 @@
+         // deal with evicted block
+         assert(blk->srcMasterId < cache->system->maxMasters());
+         occupancies[blk->srcMasterId]--;
+-
+-        blk->invalidate();
++       blk->invalidate();
+     }
+ 
+     blk->isTouched = true;
+@@ -200,7 +276,156 @@
+     blk->srcMasterId = master_id;
+ 
+     unsigned set = extractSet(addr);
+-    sets[set].moveToHead(blk);
++    
++
++ 
++    
++    if(assoc==2)
++    {sets[set].moveToHead(blk);
++
++     DPRINTF(CacheRepl, "set %x: Inserted block using LRU in %x L1Cache\n",
++                set, regenerateBlkAddr(blk->tag, set));
++
++    }
++bool checki= false;
++
++   if(assoc>3)
++	{
++
++       for(int y=0; y< assoc-1;++y)
++
++     	{
++            if(countsets[set][y]==3)
++       		{
++                 countsets[set][y]=2;         
++		//	sets[set].moveRRIP(blk,h);
++		checki=true;
++
++		}
++         
++
++if(checki) break;
++	}
++
++
++	}    
++
++
++
++
++
+ }
+ 
+ void
+@@ -215,7 +440,10 @@
+ 
+     // should be evicted before valid blocks
+     unsigned set = blk->set;
+-    sets[set].moveToTail(blk);
++if(assoc==2)    sets[set].moveToTail(blk);
++
++
++
+ }
+ 
+ void
+diff -r 5ce0c4e42f93 src/mem/cache/tags/lru.hh
+--- a/src/mem/cache/tags/lru.hh	Fri Oct 19 10:16:18 2012 -0400
++++ b/src/mem/cache/tags/lru.hh	Fri Dec 09 01:43:51 2016 -0500
+@@ -69,8 +69,14 @@
+     const unsigned assoc;
+     /** The hit latency. */
+     const unsigned hitLatency;
++     
+ 
+-    /** The cache sets. */
++//    bool maps[1024];
++    uint64_t countsets[1024][8];    
++   uint64_t countsets1[1024];
++
++
++	 /** The cache sets. */
+     CacheSet *sets;
+ 
+     /** The cache blocks. */
+@@ -86,6 +92,15 @@
+     unsigned setMask;
+     /** Mask out all bits that aren't part of the block offset. */
+     unsigned blkMask;
++     
++    uint64_t countFor;
++    uint64_t countFor1;
++    
++    int PSEL;
++
++    uint8_t MSB;
++
++    uint64_t counting;
+ 
+ public:
+     /**
